@@ -8,10 +8,10 @@ change in git.
 
 The idea and structure is based on [Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-No database to trust blindly, no cloud service, no extra dependencies: Python's
-standard library and a local SQLite FTS5 index.
+No opaque databases you can't easily browse, no cloud service, no extra dependencies: Python's
+standard library and a local SQLite FTS5 index. 
 
-You think querying markdown is slow? Not really, the provider answers in milliseconds.
+You think querying the markdown memory is slow? The provider answers in milliseconds.
 
 ## Why hwiki
 
@@ -53,12 +53,11 @@ Or configure it non-interactively:
 ```bash
 hermes config set memory.provider hwiki
 cat > ~/.hermes/hwiki.json <<'JSON'
-{ "wiki_path": "~/Obsidian/MyVault" }
+{ "wiki_path": "~/wiki" }
 JSON
 ```
 
-Any folder of markdown works, including an existing Obsidian vault. Only one
-memory provider can be active at a time.
+Any folder of markdown works, including for example an existing Obsidian vault.
 
 ## How it works
 
