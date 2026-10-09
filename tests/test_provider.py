@@ -64,16 +64,16 @@ def normalize_tool_schema(schema):
 def build_wiki(root: Path) -> None:
     (root / "wiki" / "concepts").mkdir(parents=True)
     (root / "raw").mkdir(parents=True)
-    (root / "wiki" / "concepts" / "soc2.md").write_text(
-        "---\nspine: compliance\ntype: concept\nupdated: 2026-07-21\n---\n\n"
-        "# SOC 2 Type II\n\n## Scope\n"
-        "Security TSC only. Auditor Example Audit LLP. No exceptions noted.\n\n"
-        "## Related\n[[iso-27001]]\n",
+    (root / "wiki" / "concepts" / "le-chonk.md").write_text(
+        "---\nspine: ai-inference\ntype: concept\nupdated: 2026-10-06\n---\n\n"
+        "# Mistral Le Chonk\n\n## Scope\n"
+        "Mistral Large 4 preview. Public launch nickname. No exceptions noted.\n\n"
+        "## Related\n[[mistral-models]]\n",
         encoding="utf-8",
     )
-    (root / "wiki" / "concepts" / "iso-27001.md").write_text(
-        "---\nspine: compliance\ntype: concept\n---\n\n"
-        "# ISO 27001\n\nCertificate EX-1234, Berlin and Lisbon offices.\n",
+    (root / "wiki" / "concepts" / "mistral-models.md").write_text(
+        "---\nspine: ai-inference\ntype: concept\n---\n\n"
+        "# Mistral model lineup\n\nSmall models for routing, Large for reasoning.\n",
         encoding="utf-8",
     )
     (root / "raw" / "poisoned.md").write_text(
@@ -137,31 +137,31 @@ def main() -> int:
         check("prompt states write zone", "wiki/memory" in block, block[:200])
 
         print("\n[4] tool calls return JSON strings")
-        raw = provider.handle_tool_call("wiki_memory_search", {"query": "who audited SOC 2"})
+        raw = provider.handle_tool_call("wiki_memory_search", {"query": "Le Chonk context window"})
         check("search returns str", isinstance(raw, str), type(raw).__name__)
         res = json.loads(raw)
         check("search JSON parses", res.get("success") is True)
-        check("search finds soc2", any("soc2" in r["path"] for r in res["results"]),
+        check("search finds le-chonk", any("le-chonk" in r["path"] for r in res["results"]),
               repr([r["path"] for r in res["results"]]))
-        soc2_hit = next((r for r in res["results"] if "soc2" in r["path"]), None)
+        le_chonk_hit = next((r for r in res["results"] if "le-chonk" in r["path"]), None)
         check("search exposes page links",
-              soc2_hit is not None and "iso-27001" in soc2_hit.get("links", []),
-              repr(soc2_hit.get("links") if soc2_hit else None))
+              le_chonk_hit is not None and "mistral-models" in le_chonk_hit.get("links", []),
+              repr(le_chonk_hit.get("links") if le_chonk_hit else None))
         res_iso = json.loads(provider.handle_tool_call(
-            "wiki_memory_search", {"query": "ISO certificate EX-1234"}))
-        iso_hit = next((r for r in res_iso["results"] if "iso-27001" in r["path"]), None)
+            "wiki_memory_search", {"query": "Mistral model lineup routing"}))
+        iso_hit = next((r for r in res_iso["results"] if "mistral-models" in r["path"]), None)
         check("linkless page returns empty links",
               iso_hit is not None and iso_hit.get("links") == [],
               repr(iso_hit.get("links") if iso_hit else None))
 
-        raw = provider.handle_tool_call("wiki_memory_read", {"page": "soc2"})
+        raw = provider.handle_tool_call("wiki_memory_read", {"page": "le-chonk"})
         res = json.loads(raw)
-        check("read by slug works", res.get("success") and "Example Audit" in res["content"])
-        check("read exposes frontmatter", res["frontmatter"].get("spine") == "compliance",
+        check("read by slug works", res.get("success") and "Le Chonk" in res["content"])
+        check("read exposes frontmatter", res["frontmatter"].get("spine") == "ai-inference",
               repr(res.get("frontmatter")))
-        check("read exposes links", "iso-27001" in res["links"], repr(res.get("links")))
-        res_bl = json.loads(provider.handle_tool_call("wiki_memory_read", {"page": "iso-27001"}))
-        check("read exposes backlinks", "soc2" in res_bl["backlinks"], repr(res_bl.get("backlinks")))
+        check("read exposes links", "mistral-models" in res["links"], repr(res.get("links")))
+        res_bl = json.loads(provider.handle_tool_call("wiki_memory_read", {"page": "mistral-models"}))
+        check("read exposes backlinks", "le-chonk" in res_bl["backlinks"], repr(res_bl.get("backlinks")))
 
         print("\n[5] untrusted zone is unreachable")
         res = json.loads(provider.handle_tool_call(
@@ -184,12 +184,12 @@ def main() -> int:
         check("write succeeds", res.get("success") is True, repr(res))
         check("write lands in memory zone", res["path"].startswith("wiki/memory/"), res["path"])
         check("curated pages untouched",
-              "user prefers" not in (root / "wiki" / "concepts" / "soc2.md").read_text())
+              "user prefers" not in (root / "wiki" / "concepts" / "le-chonk.md").read_text())
         res = json.loads(provider.handle_tool_call("wiki_memory_write", {
             "content": "The user prefers concise answers with no preamble.", "page": "preferences"}))
         check("duplicate suppressed", res.get("duplicate") is True, repr(res))
         res = json.loads(provider.handle_tool_call("wiki_memory_write", {
-            "content": "prod key AKIAIOSFODNN7EXAMPLE rotates monthly", "page": "preferences"}))
+            "content": "prod key SCWEXAMPLEKEY1234-ABCD rotates monthly", "page": "preferences"}))
         check("secret write refused", is_error(res), repr(res)[:160])
         res = json.loads(provider.handle_tool_call("wiki_memory_write", {"content": "  "}))
         check("empty write refused", is_error(res), repr(res)[:160])
@@ -201,7 +201,7 @@ def main() -> int:
 
         print("\n[8] prefetch latency budget (manager hard-timeout is 8s)")
         timings = []
-        for q in ["who audited SOC 2", "ISO certificate scope", "answer style preference"]:
+        for q in ["Le Chonk context window", "Mistral model lineup routing", "answer style preference"]:
             t0 = time.perf_counter()
             provider.prefetch(q)
             timings.append((time.perf_counter() - t0) * 1000)
@@ -215,8 +215,8 @@ def main() -> int:
         mirror = root / "wiki" / "memory" / "builtin-mirror.md"
         check("mirror page created", mirror.is_file())
         check("mirror content correct", "head of security" in mirror.read_text())
-        provider.on_memory_write("add", "user", "aws key AKIAIOSFODNN7EXAMPLE")
-        check("mirror blocks secrets", "AKIA" not in mirror.read_text())
+        provider.on_memory_write("add", "user", "scaleway key SCWEXAMPLEKEY1234-ABCD")
+        check("mirror blocks secrets", "SCW" not in mirror.read_text())
         provider.on_memory_write("remove", "user", "The user is head of security at Example Corp.")
         check("remove is a no-op (no corruption)", mirror.is_file())
         # Manager resolves metadata mode by inspect.signature(); ours declares
@@ -247,7 +247,7 @@ def main() -> int:
             check(f"{ctx_name}: builtin mirror blocked", mirror.read_text() == before)
             check(f"{ctx_name}: recall still works",
                   bool(json.loads(ro.handle_tool_call(
-                      "wiki_memory_search", {"query": "who audited SOC 2"}))["results"]))
+                      "wiki_memory_search", {"query": "Le Chonk context window"}))["results"]))
             ro.shutdown()
         pri = WikiMemoryProvider(config=dict(cfg))
         pri.initialize("s-pri", hermes_home=str(home), platform="cli", agent_context="primary")
@@ -263,7 +263,7 @@ def main() -> int:
         print("\n[10] lifecycle hooks are all no-throw")
         for label, fn in [
             ("sync_turn", lambda: provider.sync_turn("u", "a", session_id="sess-1", messages=[])),
-            ("queue_prefetch", lambda: provider.queue_prefetch("SOC 2 scope", session_id="sess-1")),
+            ("queue_prefetch", lambda: provider.queue_prefetch("Le Chonk pricing promo", session_id="sess-1")),
             ("on_turn_start", lambda: provider.on_turn_start(1, "hello", model="x")),
             ("on_session_end", lambda: provider.on_session_end([])),
             ("on_pre_compress", lambda: provider.on_pre_compress([])),
@@ -321,7 +321,7 @@ def main() -> int:
             "INSERT INTO facts (content, category, trust_score, tags) VALUES (?,?,?,?)",
             [
                 ("The user tracks personal tasks in Todoist.", "user_pref", 0.8, "tasks"),
-                ("SOC 2 2025 covers the Security TSC only.", "project", 0.9, "compliance"),
+                ("Mistral Le Chonk 2026 pricing promo covers inference only.", "project", 0.9, "ai-inference"),
                 ("api token is sk-abcdefghijklmnopqrstuvwx", "general", 0.5, ""),
             ],
         )
@@ -342,7 +342,7 @@ def main() -> int:
         check("migration created pages", len(imported) >= 2, repr([p.name for p in imported]))
         blob = "\n".join(p.read_text() for p in imported)
         check("user_pref migrated", "Todoist" in blob)
-        check("project fact migrated", "Security TSC" in blob)
+        check("project fact migrated", "Le Chonk" in blob)
         check("secret fact blocked in migration", "sk-abcdefghijklmnopqrstuvwx" not in blob)
 
         provider._maybe_reindex(force=True)

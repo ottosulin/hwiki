@@ -10,7 +10,7 @@ prompt injection, so the design starts from that.
 | **Write containment** | The agent writes only under `memory_dir`. Curated pages are never modified. |
 | **Read-only background contexts** | When Hermes reports an `agent_context` of `cron`, `subagent` or `flush`, the write tool is not offered, `wiki_memory_write` refuses, and built-in memory mirroring is suppressed. Recall stays on. |
 | **Path-traversal defence** | Every path is resolved and checked for containment inside the wiki root; anything escaping it is rejected. |
-| **Secret guard** | Detectors for AWS keys, GitHub and Slack tokens, Google API keys, `sk-` style keys, PEM private keys, JWTs and inline `password=` values. Applied to `wiki_memory_write`, built-in memory mirroring and migration imports. |
+| **Secret guard** | Detectors for AWS and Scaleway keys, GitHub and Slack tokens, Google API keys, `sk-` style keys, PEM private keys, JWTs and inline `password=` values. Applied to `wiki_memory_write`, built-in memory mirroring and migration imports. |
 | **Query-syntax safety** | Every search token is quoted, so FTS5 operators in user input are treated as data. Fuzz-tested. |
 | **No network** | The default `fts5` backend makes no outbound calls. |
 | **No transcript ingestion** | Conversations are never written automatically; only deliberate facts land in the wiki. |

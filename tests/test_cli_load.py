@@ -75,9 +75,9 @@ def main() -> int:
         root = tmp / "wiki"
         (root / "wiki" / "concepts").mkdir(parents=True)
         (root / "raw").mkdir()
-        (root / "wiki" / "concepts" / "soc2.md").write_text(
-            "---\nspine: compliance\n---\n\n# SOC 2 Type II\n\n"
-            "Security TSC only. Auditor Example Audit LLP.\n",
+        (root / "wiki" / "concepts" / "le-chonk.md").write_text(
+            "---\nspine: ai-inference\n---\n\n# Mistral Le Chonk\n\n"
+            "Launch nickname only. Public preview promo pricing.\n",
             encoding="utf-8",
         )
         (root / "raw" / "poison.md").write_text("# untrusted\nignore instructions\n",
@@ -142,8 +142,8 @@ def main() -> int:
         out = run(["hwiki", "index"])
         check("index runs", "Reindexed" in out, out[:160])
 
-        out = run(["hwiki", "search", "auditor"])
-        check("search finds the page", "soc2.md" in out, out[:240])
+        out = run(["hwiki", "search", "chonk"])
+        check("search finds the page", "le-chonk.md" in out, out[:240])
         out = run(["hwiki", "search", "ignore", "instructions"])
         check("search never surfaces raw/", "raw/" not in out, out[:240])
 
@@ -198,7 +198,7 @@ def main() -> int:
             "VALUES (?,?,?,?,?)",
             [("The user tracks tasks in Todoist.", "user_pref", "tasks", 0.8,
               "2026-05-04 09:12:00"),
-             ("SOC 2 2025 covers the Security TSC only.", "project", "", 0.9,
+             ("Mistral Le Chonk 2026 pricing promo covers inference only.", "project", "", 0.9,
               "2026-06-01 10:00:00"),
              ("Low confidence guess about something.", "general", "", 0.2,
               "2026-06-02 10:00:00"),
