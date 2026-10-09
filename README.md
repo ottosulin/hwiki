@@ -1,10 +1,12 @@
 # hwiki: a markdown wiki as Hermes Agent memory
 
-**Long-term memory you can open in Obsidian.** hwiki turns a folder of markdown
+**Long-term memory you can browse and edit easily.** hwiki turns a folder of markdown
 files into [Hermes Agent](https://github.com/NousResearch/hermes-agent) memory.
 The agent recalls from it before every turn and files new facts into it. You read,
-edit and reorganise the same files in Obsidian (or any editor), and track every
+edit and reorganise the same files in editors and tools like Obsidian, and track every
 change in git.
+
+The idea and structure is based on [Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 No database to trust blindly, no cloud service, no extra dependencies: Python's
 standard library and a local SQLite FTS5 index that answers in milliseconds.
