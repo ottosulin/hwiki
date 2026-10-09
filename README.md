@@ -18,26 +18,27 @@ You think querying the markdown memory is slow? The provider answers in millisec
 | Typical agent memory | hwiki |
 |---|---|
 | Opaque rows or vectors | Plain markdown pages you can read |
-| Fixing a wrong memory needs a tool call | Fix it in your editor |
+| Fixing outdated and wrong memories | Quickly skim over pages and fix with any editor |
 | No history | `git log`, `git diff`, `git blame` |
 | A pile of facts | Pages, headings, `[[wikilinks]]`, frontmatter, backlinks |
 | Data leaves the machine (hosted options) | Local files, local index, zero network calls |
+| Backups and restores | Simple and flexible; just sync with tools like Obsidian and Nextcloud, git history gives you the ability to revert any changes |
 
 ### Work on the same knowledge base as your agent
 
-The wiki is the shared artifact, and you and the agent are co-authors:
+The wiki is a shared artifact, and you and the agent are co-authors:
 
 - **You curate in your favourite editor.** Write pages, link them, restructure folders. hwiki
   re-indexes changes automatically, so the agent sees your edits within a minute.
 - **The agent recalls what you wrote.** Before each turn the most relevant
   heading-sized excerpts are injected, with page and section, so answers are
   grounded in your notes and citable.
-- **The agent writes to a staging area, never over your pages.** New facts land as
-  dated bullets in `wiki/memory/`. You review them in Obsidian, promote what
+- **The agent writes to a staging area, never over your pages.** New facts are stored as
+  dated bullets in `wiki/memory/`. You review them in your favourite markdown editor, promote what
   matters into proper pages, and delete the rest. One `git diff` shows everything
   the agent added.
 - **The graph works for both of you.** `[[wikilinks]]` and backlinks render in
-  Obsidian's graph view and let the agent follow links instead of re-searching.
+  tools like Obsidian's graph view and let the agent follow links instead of re-searching.
 
 ## Install
 
