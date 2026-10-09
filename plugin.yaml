@@ -1,0 +1,23 @@
+name: hwiki
+version: 1.0.0
+description: "Markdown wiki as Hermes long-term memory: plain files you and the agent edit together (Obsidian-compatible, git-versionable), local SQLite FTS5 search, optional qmd hybrid retrieval. No network."
+author: Otto Sulin
+license: MIT
+homepage: https://github.com/ottosulin/hwiki
+manifest_version: 2
+requires_hermes: ">=0.21"
+
+# Standard library only. PyYAML (shipped with Hermes) is used opportunistically for frontmatter.
+pip_dependencies: []
+
+# Optional, only for backend = "qmd". The setup wizard prints the hint when the binary is
+# missing and the provider falls back to FTS5.
+external_dependencies:
+  - name: qmd
+    check: "qmd --version"
+    install: "npm install -g @tobilu/qmd   # requires Node.js >= 22"
+
+# Memory-provider tools are served through MemoryProvider.get_tool_schemas(), not
+# ctx.register_tool(), so no plugin-level tools or hooks are declared here.
+provides_tools: []
+provides_hooks: []
