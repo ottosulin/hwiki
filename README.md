@@ -9,7 +9,9 @@ change in git.
 The idea and structure is based on [Karpathy's LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 No database to trust blindly, no cloud service, no extra dependencies: Python's
-standard library and a local SQLite FTS5 index that answers in milliseconds.
+standard library and a local SQLite FTS5 index.
+
+You think querying markdown is slow? Not really, the provider answers in milliseconds.
 
 ## Why hwiki
 
@@ -25,7 +27,7 @@ standard library and a local SQLite FTS5 index that answers in milliseconds.
 
 The wiki is the shared artifact, and you and the agent are co-authors:
 
-- **You curate in Obsidian.** Write pages, link them, restructure folders. hwiki
+- **You curate in your favourite editor.** Write pages, link them, restructure folders. hwiki
   re-indexes changes automatically, so the agent sees your edits within a minute.
 - **The agent recalls what you wrote.** Before each turn the most relevant
   heading-sized excerpts are injected, with page and section, so answers are
