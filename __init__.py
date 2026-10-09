@@ -112,7 +112,7 @@ WIKI_READ_SCHEMA = {
         "properties": {
             "page": {
                 "type": "string",
-                "description": "Page path ('wiki/concepts/soc2.md'), slug ('soc2'), or wikilink target.",
+                "description": "Page path ('wiki/concepts/le-chonk.md'), slug ('le-chonk'), or wikilink target.",
             },
             "max_chars": {
                 "type": "integer",

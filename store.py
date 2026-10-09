@@ -126,6 +126,7 @@ def slugify(value: str, *, fallback: str = "note") -> str:
 
 _SECRET_PATTERNS: Sequence[Tuple[str, re.Pattern]] = (
     ("AWS access key id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("Scaleway secret key", re.compile(r"\bSCW[A-Z0-9]{8}[A-Z0-9-]{3,}\b")),
     ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
     ("Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b")),
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
