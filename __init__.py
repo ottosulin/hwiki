@@ -22,6 +22,7 @@ Config lives in ``$HERMES_HOME/hwiki.json``; see README.md.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -36,6 +37,14 @@ try:
 except Exception:  # pragma: no cover - offline testing without Hermes installed
     class MemoryProvider:  # type: ignore[no-redef]
         """Minimal shim so the module imports outside a Hermes checkout."""
+
+try:
+    # Hermes keeps profile isolation (the active HERMES_HOME, the per-turn secret
+    # scope) in contextvars; memory-provider background jobs must start through
+    # this helper so they run under the caller's context.
+    from agent.memory_provider import spawn_context_thread as _hermes_spawn_context_thread
+except Exception:  # pragma: no cover - older Hermes or offline testing
+    _hermes_spawn_context_thread = None
 
 try:
     from tools.registry import tool_error
@@ -57,6 +66,20 @@ from .config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _spawn_context_thread(target, *, name: str) -> threading.Thread:
+    """Unstarted daemon thread that runs ``target`` under the caller's contextvars.
+
+    Uses Hermes' ``spawn_context_thread`` when available and an equivalent
+    ``contextvars.copy_context()`` wrapper on hosts that predate it. A bare
+    ``threading.Thread`` starts with an empty context, so under multiplexed
+    profiles its work would resolve the default profile instead of the caller's.
+    """
+    if _hermes_spawn_context_thread is not None:
+        return _hermes_spawn_context_thread(target, name=name)
+    ctx = contextvars.copy_context()
+    return threading.Thread(target=lambda: ctx.run(target), name=name, daemon=True)
 
 __all__ = [
     "WikiMemoryProvider", "register", "load_config", "build_runtime",
@@ -404,7 +427,7 @@ class WikiMemoryProvider(MemoryProvider):
             except Exception as exc:
                 logger.debug("wiki memory: queue_prefetch failed: %s", exc)
 
-        threading.Thread(target=_run, daemon=True, name="wiki-memory-prefetch").start()
+        _spawn_context_thread(_run, name="wiki-memory-prefetch").start()
 
     def _recall(self, query: str) -> str:
         if self._backend is None:

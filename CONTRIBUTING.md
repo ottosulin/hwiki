@@ -31,6 +31,11 @@ hermes plugins validate .
 Set `HWIKI_BENCH_PATH=/path/to/a/wiki` to additionally index and time a real wiki
 in `tests/test_store_search.py`.
 
+Set `HWIKI_HERMES_SRC=/path/to/hermes-agent` (a Hermes source checkout, for
+example `~/.hermes/hermes-agent`) to run the tests in
+`tests/test_context_threads.py` against Hermes' own `spawn_context_thread` and
+profile home; without it they are skipped.
+
 ## Pull requests
 
 Add a test for every behaviour change, ideally one that fails before your change.
