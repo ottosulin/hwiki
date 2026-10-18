@@ -11,6 +11,7 @@ Configuration lives in `$HERMES_HOME/hwiki.json` (`$HERMES_HOME` is `~/.hermes`,
 | `wiki_path` | | **Required.** Wiki root. `$HERMES_HOME` and `~` expand. |
 | `backend` | `fts5` | `fts5` or `qmd` (`qmd` builds a hybrid with FTS5 fallback). |
 | `memory_dir` | `wiki/memory` | Wiki-relative folder the agent may write to. The only writable path. |
+| `staging_path` | | Absolute folder **outside** the wiki. When set, agent writes and built-in memory mirrors go there instead of `memory_dir`, and nothing under the wiki root is written. Staged pages are not indexed or recalled until you promote them into the wiki. A path inside the wiki (or a symlink into it), a blank value, or an `index_path` inside the wiki makes the provider inactive with an error. `~` and `$HERMES_HOME` expand. Included in `hermes backup` when outside `HERMES_HOME`. |
 | `untrusted_dirs` | `["raw"]` | Never indexed, recalled or readable through memory tools. |
 | `include` | `["**/*.md"]` | Root-relative globs to index. |
 | `exclude` | `[]` | Root-relative globs to skip (`.git`, `node_modules`, `.obsidian` and similar are always skipped). |
@@ -32,7 +33,7 @@ Configuration lives in `$HERMES_HOME/hwiki.json` (`$HERMES_HOME` is `~/.hermes`,
 ### Environment overrides
 
 Environment variables win over the file: `HWIKI_PATH`, `HWIKI_BACKEND`,
-`HWIKI_MEMORY_DIR`, `HWIKI_QMD_BINARY`, `HWIKI_QMD_MODE`.
+`HWIKI_MEMORY_DIR`, `HWIKI_STAGING_PATH`, `HWIKI_QMD_BINARY`, `HWIKI_QMD_MODE`.
 
 ### Upgrading from the pre-1.0 `wiki` provider
 
@@ -55,7 +56,10 @@ profile to scope memory. Profiles can point at different wikis or share one.
 Point `wiki_path` at the vault root. Recommended layout inside the vault:
 
 - Keep curated notes anywhere under the indexed globs.
-- Set `memory_dir` to a folder you review regularly (for example `wiki/memory`).
+- Set `memory_dir` to a folder you review regularly (for example `wiki/memory`), or,
+  for a vault you only change by hand or through reviewed commits, set `staging_path`
+  to a folder outside it (for example `$HERMES_HOME/hwiki-staging`) and promote what is
+  worth keeping yourself.
 - Keep clipped articles, PDFs and other third-party material in an untrusted
   folder (`raw/` by default).
 

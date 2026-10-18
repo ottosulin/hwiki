@@ -73,7 +73,8 @@ my-wiki/
 - **Recall:** heading-scoped chunks from SQLite FTS5 (BM25). Sub-10 ms on a
   2,000-page wiki. Optional [qmd](https://github.com/tobi/qmd) hybrid semantic
   search, with automatic fallback to FTS5 if qmd is missing or slow.
-- **Writes:** append-only to `memory_dir`, de-duplicated, with a secret guard that
+- **Writes:** append-only to `memory_dir` (or to `staging_path`, outside the wiki, so the
+  wiki is never written), de-duplicated, with a secret guard that
   refuses API keys, tokens and private keys.
 - **Untrusted sources:** put third-party documents in `raw/`. They never reach
   auto-injected context, which is where prompt-injection attacks are most
@@ -124,12 +125,13 @@ hermes hwiki migrate --dry-run   # import facts from the holographic provider
 | `wiki_path` | | Wiki root. `~` and `$HERMES_HOME` expand. |
 | `backend` | `fts5` | `fts5`, or `qmd` (hybrid with FTS5 fallback) |
 | `memory_dir` | `wiki/memory` | The only folder the agent may write to |
+| `staging_path` | | Absolute folder outside the wiki. When set, writes go there instead and the wiki is never written; staged facts are not recalled until you promote them |
 | `untrusted_dirs` | `["raw"]` | Never indexed, recalled or readable |
 | `prefetch_limit` | `4` | Excerpts injected per turn |
 | `prefetch_max_chars` | `1400` | Cap on injected characters per turn |
 | `auto_recall` | `true` | `false` = tools only |
 
-Environment overrides: `HWIKI_PATH`, `HWIKI_BACKEND`, `HWIKI_MEMORY_DIR`,
+Environment overrides: `HWIKI_PATH`, `HWIKI_BACKEND`, `HWIKI_MEMORY_DIR`, `HWIKI_STAGING_PATH`,
 `HWIKI_QMD_BINARY`, `HWIKI_QMD_MODE`. All options, qmd tuning and Docker setup:
 [docs/configuration.md](docs/configuration.md).
 
@@ -139,8 +141,8 @@ Environment overrides: `HWIKI_PATH`, `HWIKI_BACKEND`, `HWIKI_MEMORY_DIR`,
   the machine. The optional qmd backend runs local models.
 - **Data locations:** your wiki folder (which you choose) plus
   `$HERMES_HOME/hwiki.json` and `$HERMES_HOME/hwiki-index.sqlite` (disposable,
-  rebuilt on demand).
-- Writes are confined to `memory_dir`, path traversal is rejected, and search
+  rebuilt on demand), and the `staging_path` folder when you set one.
+- Writes are confined to `memory_dir` (or `staging_path` outside the wiki), path traversal is rejected, and search
   input is treated as data, never as query syntax.
 
 Details: [docs/security.md](docs/security.md). Design rationale and benchmarks:

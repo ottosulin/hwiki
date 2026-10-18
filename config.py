@@ -33,6 +33,7 @@ DEFAULTS: Dict[str, Any] = {
     "wiki_path": "",
     "backend": "fts5",              # fts5 | qmd  (qmd implies hybrid + fts5 fallback)
     "memory_dir": "wiki/memory",
+    "staging_path": "",             # absolute folder outside the wiki; set = never write the wiki
     "untrusted_dirs": ["raw"],
     "include": ["**/*.md"],
     "exclude": [],
@@ -57,6 +58,7 @@ _ENV_OVERRIDES = {
     "HWIKI_PATH": "wiki_path",
     "HWIKI_BACKEND": "backend",
     "HWIKI_MEMORY_DIR": "memory_dir",
+    "HWIKI_STAGING_PATH": "staging_path",
     "HWIKI_QMD_BINARY": "qmd_binary",
     "HWIKI_QMD_MODE": "qmd_mode",
 }
@@ -166,9 +168,11 @@ def build_runtime(config: Optional[Dict[str, Any]] = None):
         exclude=config.get("exclude") or [],
         untrusted_dirs=config.get("untrusted_dirs") or [],
         memory_dir=str(config.get("memory_dir") or "wiki/memory"),
+        staging_path=expand_path(str(config.get("staging_path") or ""), home) or None,
     )
 
     index_path = expand_path(str(config.get("index_path") or ""), home) or default_index_path(home)
+    store.assert_outside_wiki(index_path, "index_path")
 
     backend = build_backend(
         store,

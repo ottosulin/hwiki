@@ -10,9 +10,10 @@ Pure stdlib. Responsible for:
 * appending durable notes into the *memory zone* under a write lock,
 * refusing to persist anything that looks like a secret.
 
-Design rule: this module NEVER writes outside ``<root>/<memory_dir>``.
-The curated wiki is read-only to the memory provider — automatic writes
-must not corrupt hand-maintained synthesis pages.
+Design rule: this module NEVER writes outside ``<root>/<memory_dir>``, or,
+when ``staging_path`` is set, outside that staging folder (and then never
+under ``<root>`` at all). The curated wiki is read-only to the memory
+provider — automatic writes must not corrupt hand-maintained synthesis pages.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import fnmatch
 import hashlib
 import os
 import re
+import stat
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -256,6 +258,11 @@ class WikiStore:
         home of prompt-injection payloads (customer PDFs, vendor advisories).
     memory_dir:
         Root-relative directory that the provider may write to.
+    staging_path:
+        Optional directory OUTSIDE the wiki. When set, every write goes there
+        instead of ``memory_dir`` and nothing under ``root`` is ever written.
+        Staged pages are not indexed or recalled until someone promotes them
+        into the wiki.
     """
 
     def __init__(
@@ -266,12 +273,50 @@ class WikiStore:
         exclude: Sequence[str] = (),
         untrusted_dirs: Sequence[str] = ("raw",),
         memory_dir: str = "wiki/memory",
+        staging_path: os.PathLike | str | None = None,
     ) -> None:
         self.root = Path(root).expanduser().resolve()
         self.include = tuple(include) or ("**/*.md",)
         self.exclude = tuple(exclude) + DEFAULT_EXCLUDES
         self.untrusted_dirs = tuple(d.strip("/") for d in untrusted_dirs if d.strip("/"))
         self.memory_dir = memory_dir.strip("/")
+        self.staging_root: Optional[Path] = None
+        self._staging_configured: Optional[Path] = None
+        self._staging_identity: Optional[Tuple[int, int]] = None
+        if staging_path is not None and str(staging_path) != "":
+            if not str(staging_path).strip():
+                raise ValueError("staging_path is blank; leave it unset or give an absolute path")
+            staging = Path(staging_path).expanduser()
+            if not staging.is_absolute():
+                raise ValueError(f"staging_path must be an absolute path: {staging_path}")
+            self._staging_configured = staging
+            self.staging_root = self._resolve_staging()
+            self.staging_root.mkdir(parents=True, exist_ok=True)
+            info = os.stat(self.staging_root)
+            # Every write checks it still opens this very folder (see _MemoryDir).
+            self._staging_identity = (info.st_dev, info.st_ino)
+
+    def _resolve_staging(self) -> Path:
+        """Resolve the configured staging folder now and check it is outside the wiki."""
+        assert self._staging_configured is not None
+        staging = self._staging_configured.resolve()
+        if staging == self.root or self.root in staging.parents:
+            raise ValueError(
+                f"staging_path must be outside the wiki root ({self.root}); "
+                "use memory_dir for writes inside the wiki"
+            )
+        return staging
+
+    def assert_outside_wiki(self, path: os.PathLike | str, what: str) -> None:
+        """With staging on, nothing hwiki writes may live under the wiki root."""
+        if self.staging_root is None or not str(path):
+            return
+        resolved = Path(path).expanduser().resolve()
+        if resolved == self.root or self.root in resolved.parents:
+            raise ValueError(
+                f"{what} ({resolved}) is inside the wiki root, but staging_path is set "
+                "so the wiki must never be written; move it outside the wiki"
+            )
 
     # -- discovery ---------------------------------------------------------
 
@@ -431,10 +476,24 @@ class WikiStore:
                 out[page.slug] = missing
         return out
 
-    # -- writing (memory zone only) ---------------------------------------
+    # -- writing (memory zone or staging only) ----------------------------
+
+    @property
+    def writes_to_wiki(self) -> bool:
+        """False when writes are staged outside the wiki."""
+        return self.staging_root is None
 
     def memory_root(self) -> Path:
+        if self.staging_root is not None:
+            return self.staging_root
         return self.root / self.memory_dir
+
+    def write_location(self) -> str:
+        """Where writes land, for prompts and status: ``memory_dir`` or the staging path."""
+        return str(self.staging_root) if self.staging_root is not None else self.memory_dir
+
+    def _written_path(self, target: Path) -> str:
+        return str(target) if self.staging_root is not None else self.relpath(target)
 
     def memory_page_path(self, slug: str) -> Path:
         return self.memory_root() / f"{slugify(slug)}.md"
@@ -470,7 +529,7 @@ class WikiStore:
 
         slug = slugify(page or topic or "journal", fallback="journal")
         target = self.memory_page_path(slug)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        name, lock_name = target.name, target.name + ".lock"
 
         stamp = today or date.today().isoformat()
         suffix = ""
@@ -480,37 +539,50 @@ class WikiStore:
             suffix += f" _(source: {source})_"
         entry = f"- **{stamp}** — {content}{suffix}"
 
-        with _FileLock(target):
-            created = not target.exists()
-            if created:
-                header = (
-                    "---\n"
-                    f"title: {topic or slug.replace('-', ' ').title()}\n"
-                    "spine: memory\n"
-                    "type: memory\n"
-                    "status: auto\n"
-                    "source: agent-memory\n"
-                    f"updated: {stamp}\n"
-                    "---\n\n"
-                    f"# {topic or slug.replace('-', ' ').title()}\n\n"
-                    "> Auto-maintained by the `hwiki` memory provider. Promote durable\n"
-                    "> conclusions into the curated wiki rather than editing in place.\n\n"
-                    "## Log\n\n"
-                )
-                target.write_text(header + entry + "\n", encoding="utf-8")
-                return {"path": self.relpath(target), "created": True, "duplicate": False}
+        with self._open_memory_dir() as folder:
+            folder.refuse_symlink(name)
+            folder.refuse_symlink(lock_name)
+            with folder.lock(lock_name):
+                if not folder.exists(name):
+                    header = (
+                        "---\n"
+                        f"title: {topic or slug.replace('-', ' ').title()}\n"
+                        "spine: memory\n"
+                        "type: memory\n"
+                        "status: auto\n"
+                        "source: agent-memory\n"
+                        f"updated: {stamp}\n"
+                        "---\n\n"
+                        f"# {topic or slug.replace('-', ' ').title()}\n\n"
+                        "> Auto-maintained by the `hwiki` memory provider. Promote durable\n"
+                        "> conclusions into the curated wiki rather than editing in place.\n\n"
+                        "## Log\n\n"
+                    )
+                    folder.write(name, header + entry + "\n")
+                    return {"path": self._written_path(target), "created": True, "duplicate": False}
 
-            existing = target.read_text(encoding="utf-8", errors="replace")
-            if _normalize(content) in _normalize(existing):
-                return {"path": self.relpath(target), "created": False, "duplicate": True}
+                existing = folder.read(name)
+                if _normalize(content) in _normalize(existing):
+                    return {"path": self._written_path(target), "created": False, "duplicate": True}
 
-            if "\n## Log" not in existing:
-                existing = existing.rstrip("\n") + "\n\n## Log\n"
-            updated = existing.rstrip("\n") + "\n" + entry + "\n"
-            updated = _bump_frontmatter_date(updated, stamp)
-            target.write_text(updated, encoding="utf-8")
+                if "\n## Log" not in existing:
+                    existing = existing.rstrip("\n") + "\n\n## Log\n"
+                updated = existing.rstrip("\n") + "\n" + entry + "\n"
+                updated = _bump_frontmatter_date(updated, stamp)
+                folder.write(name, updated)
 
-        return {"path": self.relpath(target), "created": False, "duplicate": False}
+        return {"path": self._written_path(target), "created": False, "duplicate": False}
+
+    def _open_memory_dir(self) -> "_MemoryDir":
+        """Open the folder writes go to; with staging, refuse if it is no longer the one checked."""
+        if self.staging_root is None:
+            root = self.memory_root()
+            root.mkdir(parents=True, exist_ok=True)
+            return _MemoryDir(root)
+        if self._resolve_staging() != self.staging_root:
+            raise ValueError("staging_path no longer resolves to the folder checked at start-up; "
+                             "refusing to write")
+        return _MemoryDir(self.staging_root, expected=self._staging_identity)
 
     def content_hash(self) -> str:
         """Cheap fingerprint of the corpus (paths + mtimes + sizes)."""
@@ -523,6 +595,81 @@ class WikiStore:
             digest.update(str(abspath).encode())
             digest.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode())
         return digest.hexdigest()
+
+
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_DIR_FD = all(f in os.supports_dir_fd for f in (os.open, os.stat, os.unlink))
+
+
+class _MemoryDir:
+    """The folder memory pages are written to, opened once per write.
+
+    Where the OS allows it, every file operation is relative to a descriptor
+    of the folder itself and refuses symlinks (``O_NOFOLLOW``), so swapping a
+    page, its lock file or the folder for a symlink after the checks cannot
+    redirect the write. With ``expected`` (the staging folder's device and
+    inode recorded at start-up), opening a different folder is refused.
+    """
+
+    def __init__(self, root: Path, expected: Optional[Tuple[int, int]] = None) -> None:
+        self.root = root
+        self.fd: Optional[int] = None
+        if _DIR_FD:
+            self.fd = os.open(root, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
+            info = os.fstat(self.fd)
+        else:  # pragma: no cover - platforms without dir_fd (Windows)
+            info = os.lstat(root)
+            if stat.S_ISLNK(info.st_mode):
+                raise ValueError("refusing to write through a symlinked memory folder")
+        if expected is not None and (info.st_dev, info.st_ino) != expected:
+            self.close()
+            raise ValueError("the staging folder changed since start-up; refusing to write")
+
+    def __enter__(self) -> "_MemoryDir":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+    def _path(self, name: str) -> str:
+        return name if self.fd is not None else str(self.root / name)
+
+    def _kw(self) -> Dict[str, int]:
+        return {"dir_fd": self.fd} if self.fd is not None else {}
+
+    def _lstat(self, name: str):
+        try:
+            return os.stat(self._path(name), follow_symlinks=False, **self._kw())
+        except FileNotFoundError:
+            return None
+
+    def refuse_symlink(self, name: str) -> None:
+        info = self._lstat(name)
+        if info is not None and stat.S_ISLNK(info.st_mode):
+            raise ValueError(f"refusing to write through a symlink: {name}")
+
+    def exists(self, name: str) -> bool:
+        return self._lstat(name) is not None
+
+    def read(self, name: str) -> str:
+        fd = os.open(self._path(name), os.O_RDONLY | _O_NOFOLLOW, **self._kw())
+        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+
+    def write(self, name: str, text: str) -> None:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_NOFOLLOW
+        fd = os.open(self._path(name), flags, 0o644, **self._kw())
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def lock(self, name: str, timeout: float = 5.0) -> "_FileLock":
+        return _FileLock(self, name, timeout)
 
 
 def _normalize(text: str) -> str:
@@ -545,14 +692,16 @@ def _bump_frontmatter_date(text: str, stamp: str) -> str:
 class _FileLock:
     """Best-effort advisory lock so concurrent turns can't interleave writes."""
 
-    def __init__(self, target: Path, timeout: float = 5.0) -> None:
-        self.lockfile = target.with_suffix(target.suffix + ".lock")
+    def __init__(self, folder: _MemoryDir, name: str, timeout: float = 5.0) -> None:
+        self.folder = folder
+        self.name = name
         self.timeout = timeout
         self._handle = None
 
     def __enter__(self) -> "_FileLock":
-        self.lockfile.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = open(self.lockfile, "a+")
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | _O_NOFOLLOW
+        fd = os.open(self.folder._path(self.name), flags, 0o644, **self.folder._kw())
+        self._handle = os.fdopen(fd, "a+")
         if fcntl is None:
             return self
         deadline = time.time() + self.timeout
@@ -578,6 +727,6 @@ class _FileLock:
         except Exception:
             pass
         try:
-            self.lockfile.unlink()
+            os.unlink(self.folder._path(self.name), **self.folder._kw())
         except OSError:
             pass

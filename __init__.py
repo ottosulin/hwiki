@@ -254,16 +254,30 @@ class WikiMemoryProvider(MemoryProvider):
             logger.warning("wiki memory: %s", self._init_error)
             return
 
-        self._store = WikiStore(
-            root,
-            include=self._config.get("include") or ["**/*.md"],
-            exclude=self._config.get("exclude") or [],
-            untrusted_dirs=self._config.get("untrusted_dirs") or [],
-            memory_dir=str(self._config.get("memory_dir") or "wiki/memory"),
-        )
+        try:
+            self._store = WikiStore(
+                root,
+                include=self._config.get("include") or ["**/*.md"],
+                exclude=self._config.get("exclude") or [],
+                untrusted_dirs=self._config.get("untrusted_dirs") or [],
+                memory_dir=str(self._config.get("memory_dir") or "wiki/memory"),
+                staging_path=_expand(str(self._config.get("staging_path") or ""), self._hermes_home)
+                or None,
+            )
+        except ValueError as exc:
+            self._init_error = str(exc)
+            logger.warning("wiki memory: %s", self._init_error)
+            return
 
         index_path = (_expand(str(self._config.get("index_path") or ""), self._hermes_home)
                       or default_index_path(self._hermes_home))
+        try:
+            self._store.assert_outside_wiki(index_path, "index_path")
+        except ValueError as exc:
+            self._init_error = str(exc)
+            logger.warning("wiki memory: %s", self._init_error)
+            self._store = None
+            return
 
         self._backend = build_backend(
             self._store,
@@ -330,7 +344,15 @@ class WikiMemoryProvider(MemoryProvider):
     def backup_paths(self) -> List[str]:
         """The wiki usually lives outside HERMES_HOME — declare it for backups."""
         raw = _expand(str(self._config.get("wiki_path") or ""), self._hermes_home)
-        return [raw] if raw and Path(raw).is_dir() else []
+        paths = [raw] if raw and Path(raw).is_dir() else []
+        # Staged facts live only in staging_path until promoted, so back them up too.
+        staging = _expand(str(self._config.get("staging_path") or "").strip(), self._hermes_home)
+        if staging and Path(staging).is_absolute() and Path(staging).is_dir():
+            home = Path(self._hermes_home or resolve_hermes_home()).expanduser().resolve()
+            resolved = Path(staging).resolve()
+            if resolved != home and home not in resolved.parents:  # HERMES_HOME is backed up anyway
+                paths.append(staging)
+        return paths
 
     # -- indexing ----------------------------------------------------------
 
@@ -367,7 +389,17 @@ class WikiMemoryProvider(MemoryProvider):
             counts = self._backend.count()
         except Exception:
             counts = {"pages": 0, "chunks": 0}
-        memory_dir = self._store.memory_dir
+        if self._store.writes_to_wiki:
+            writes = (
+                f"Automatic writes land in `{self._store.memory_dir}/`; "
+                "curated pages are edited by hand only."
+            )
+        else:
+            writes = (
+                f"Automatic writes are staged outside the wiki, in `{self._store.staging_root}`, "
+                "for a person to review; the wiki itself is never written, and staged "
+                "facts are not recalled until someone promotes them into the wiki."
+            )
         return (
             "# Wiki Memory\n"
             f"Long-term memory is a markdown wiki at `{self._store.root}` "
@@ -376,7 +408,7 @@ class WikiMemoryProvider(MemoryProvider):
             "- `wiki_memory_read` — open a page in full and follow its [[wikilinks]].\n"
             "- `wiki_memory_write` — file durable facts (preferences, decisions, "
             "stable environment facts). Never secrets or task progress.\n"
-            f"Automatic writes land in `{memory_dir}/`; curated pages are edited by hand only."
+            + writes
         )
 
     # -- recall ------------------------------------------------------------
@@ -490,6 +522,16 @@ class WikiMemoryProvider(MemoryProvider):
             # Don't advertise a tool we will refuse — a cron/subagent run
             # shouldn't waste turns discovering the write path is closed.
             schemas = [s for s in schemas if s is not WIKI_WRITE_SCHEMA]
+        elif self._store is not None and not self._store.writes_to_wiki:
+            staged_write = dict(WIKI_WRITE_SCHEMA)
+            staged_write["description"] = WIKI_WRITE_SCHEMA["description"].replace(
+                "Writes a dated bullet into the wiki's memory zone — the curated wiki "
+                "pages are never modified.",
+                "Writes a dated bullet into a staging folder outside the wiki, for a "
+                "person to review; the wiki is never modified and staged facts are not "
+                "recalled until promoted.",
+            )
+            schemas = [staged_write if s is WIKI_WRITE_SCHEMA else s for s in schemas]
         return schemas
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
@@ -574,14 +616,20 @@ class WikiMemoryProvider(MemoryProvider):
             today=date.today().isoformat(),
         )
         self._writes_this_session += 1
-        self._maybe_reindex(force=True)
+        if self._store.writes_to_wiki:
+            self._maybe_reindex(force=True)
+            filed = "Fact filed to long-term memory."
+        else:
+            filed = ("Fact staged for review outside the wiki; it will be recalled "
+                     "once someone promotes it into the wiki.")
         return json.dumps({
             "success": True,
             "path": result["path"],
+            "staged": not self._store.writes_to_wiki,
             "created_page": result["created"],
             "duplicate": result["duplicate"],
             "note": ("An equivalent fact was already recorded; nothing appended."
-                     if result["duplicate"] else "Fact filed to long-term memory."),
+                     if result["duplicate"] else filed),
         }, ensure_ascii=False)
 
     def _tool_status(self, args: Dict[str, Any]) -> str:
@@ -597,6 +645,7 @@ class WikiMemoryProvider(MemoryProvider):
             "backend": self._backend.name,
             "indexed": counts,
             "memory_dir": self._store.memory_dir,
+            "staging_path": str(self._store.staging_root) if self._store.staging_root else None,
             "memory_pages": memory_pages,
             "untrusted_dirs_excluded": list(self._store.untrusted_dirs),
             "writes_this_session": self._writes_this_session,

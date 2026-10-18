@@ -28,7 +28,13 @@ from .config import CONFIG_FILENAME, build_runtime, load_config
 
 def _load():
     """Resolve (config, store, backend), printing guidance if unconfigured."""
-    config, store, backend = build_runtime(load_config())
+    config = load_config()
+    try:
+        config, store, backend = build_runtime(config)
+    except ValueError as exc:  # invalid configuration, e.g. staging_path inside the wiki
+        print(f"\n  Invalid hwiki configuration: {exc}")
+        print(f"  Config file: {Path(config.get('_hermes_home', '')) / CONFIG_FILENAME}\n")
+        return config, None, None
     if store is None:
         raw = config.get("wiki_path") or "(unset)"
         print(f"\n  wiki_path is not set or does not exist: {raw}")
@@ -49,7 +55,10 @@ def _cmd_status() -> None:
     print(f"  Root:      {store.root}")
     print(f"  Backend:   {backend.name}")
     print(f"  Indexed:   {counts.get('pages', 0)} pages / {counts.get('chunks', 0)} chunks")
-    print(f"  Memory:    {store.memory_dir}  ({len(pages)} page(s))")
+    if store.writes_to_wiki:
+        print(f"  Memory:    {store.memory_dir}  ({len(pages)} page(s))")
+    else:
+        print(f"  Staging:   {store.staging_root}  ({len(pages)} page(s), outside the wiki, not indexed)")
     for name in pages:
         print(f"               - {name}")
     print(f"  Untrusted: {', '.join(store.untrusted_dirs) or '(none)'} (never indexed)")

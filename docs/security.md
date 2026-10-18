@@ -7,7 +7,7 @@ prompt injection, so the design starts from that.
 | Control | Implementation |
 |---|---|
 | **Untrusted-zone isolation** | `untrusted_dirs` (default `raw/`) are excluded from indexing, recall and direct reads, enforced in three independent places (see below). |
-| **Write containment** | The agent writes only under `memory_dir`. Curated pages are never modified. |
+| **Write containment** | The agent writes only under `memory_dir`. Curated pages are never modified. With `staging_path`, writes go to that folder outside the wiki instead, and nothing under the wiki root is written: a staging path inside the wiki (including through a symlink), an `index_path` inside the wiki, a staged page or lock file that is a symlink, and a staging folder replaced after start-up are all refused; writes open the folder once and work relative to that descriptor, checking it is the folder recorded at start-up. Staged facts are included in `hermes backup` when the folder is outside `HERMES_HOME`. |
 | **Read-only background contexts** | When Hermes reports an `agent_context` of `cron`, `subagent` or `flush`, the write tool is not offered, `wiki_memory_write` refuses, and built-in memory mirroring is suppressed. Recall stays on. |
 | **Path-traversal defence** | Every path is resolved and checked for containment inside the wiki root; anything escaping it is rejected. |
 | **Secret guard** | Detectors for AWS and Scaleway keys, GitHub and Slack tokens, Google API keys, `sk-` style keys, PEM private keys, JWTs and inline `password=` values. Applied to `wiki_memory_write`, built-in memory mirroring and migration imports. |
