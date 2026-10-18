@@ -273,6 +273,7 @@ class WikiMemoryProvider(MemoryProvider):
             qmd_collection=str(self._config.get("qmd_collection") or "hwiki"),
             qmd_mode=str(self._config.get("qmd_mode") or "search"),
             qmd_timeout=float(self._config.get("qmd_timeout_s") or 6.0),
+            qmd_index=str(self._config.get("qmd_index") or "hwiki"),
             max_hits_per_page=int(self._config.get("max_hits_per_page") or 2),
             demote_paths=list(self._config.get("demote_paths") or []),
             fetch_multiplier=int(self._config.get("fetch_multiplier") or 4),

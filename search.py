@@ -275,6 +275,126 @@ class Fts5Backend:
 # qmd
 # ---------------------------------------------------------------------------
 
+def qmd_config_dir() -> Path:
+    """The directory qmd reads ``<index>.yml`` from (same resolution as qmd itself)."""
+    if os.environ.get("QMD_CONFIG_DIR"):
+        return Path(os.environ["QMD_CONFIG_DIR"])
+    if os.environ.get("XDG_CONFIG_HOME"):
+        return Path(os.environ["XDG_CONFIG_HOME"]) / "qmd"
+    return Path(os.environ.get("HOME") or Path.home()) / ".config" / "qmd"
+
+
+# Characters fast-glob (qmd's matcher) treats specially; escaped in literal text.
+_GLOB_SPECIAL = frozenset("\\*?[]{}()!@+")
+_MAX_GLOB_WILDCARDS = 6
+_INDEX_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_RESERVED_INDEX_NAMES = frozenset({"index"})  # qmd's default index: never take it over
+
+
+def _escape_glob(text: str) -> str:
+    return "".join("\\" + ch if ch in _GLOB_SPECIAL else ch for ch in text)
+
+
+def _class_token(text: str) -> tuple:
+    """Translate an ``fnmatch`` ``[...]`` class into fast-glob syntax.
+
+    fnmatch negates with ``!`` and treats ``^`` as a literal; fast-glob
+    negates with ``^`` and reads ``[!a]`` as the set ``{!, a}``. A negated
+    class, or one listing ``/``, can match ``/`` in fnmatch, so it is a
+    wildcard that also needs a crossing form.
+    """
+    body = text[1:-1]
+    negate = body.startswith("!")
+    if negate:
+        body = body[1:]
+    escaped = "".join("\\" + ch if ch in "\\^[]" else ch for ch in body)
+    can_cross = negate or "/" in body
+    return ("class", "[" + ("^" if negate else "") + escaped + "]", can_cross)
+
+
+def _fnmatch_tokens(pattern: str) -> List[tuple]:
+    """Split an ``fnmatch`` pattern into literal, ``*``, ``?`` and ``[...]`` tokens."""
+    tokens: List[tuple] = []
+    i, n = 0, len(pattern)
+    while i < n:
+        ch = pattern[i]
+        if ch == "*":
+            while i < n and pattern[i] == "*":
+                i += 1
+            tokens.append(("star", "*"))
+            continue
+        if ch == "?":
+            tokens.append(("any", "?"))
+            i += 1
+            continue
+        if ch == "[":
+            j = i + 1
+            if j < n and pattern[j] == "!":
+                j += 1
+            if j < n and pattern[j] == "]":
+                j += 1
+            close = pattern.find("]", j)
+            if close != -1:
+                tokens.append(_class_token(pattern[i:close + 1]))
+                i = close + 1
+                continue
+        tokens.append(("lit", ch))
+        i += 1
+    return tokens
+
+
+def _globs_for_qmd(pattern: str) -> List[str]:
+    """fast-glob patterns that together match at least what ``fnmatch`` matches.
+
+    In ``fnmatch`` (hwiki's ``exclude``) ``*`` and ``?`` also match ``/``; in
+    fast-glob they stay inside one path segment. Each wildcard therefore gets
+    two forms, inside a segment (``*``, ``?``) and across segments
+    (``*/**/*``, ``/``), and every combination is emitted, so ``private*.md``
+    also ignores ``private/team-secret.md``. Literal text is escaped.
+    Patterns with more than six wildcards fall back to ignoring the whole
+    directory before the first wildcard or class (broader than hwiki: it only
+    costs qmd recall). ``[...]`` classes are translated (see ``_class_token``).
+    """
+    tokens = _fnmatch_tokens(pattern.strip().lstrip("/"))
+    if not tokens:
+        return []
+    wildcards = [i for i, token in enumerate(tokens)
+                 if token[0] in {"star", "any"} or (token[0] == "class" and token[2])]
+    if len(wildcards) > _MAX_GLOB_WILDCARDS:
+        first = next(i for i, token in enumerate(tokens) if token[0] != "lit")
+        prefix = "".join(token[1] for token in tokens[:first])
+        directory = prefix.rsplit("/", 1)[0] if "/" in prefix else ""
+        return [f"{_escape_glob(directory)}/**" if directory else "**"]
+    out: List[str] = []
+    for mask in range(1 << len(wildcards)):
+        crossing = {wildcards[bit] for bit in range(len(wildcards)) if mask >> bit & 1}
+        parts = []
+        for i, (kind, text, *_rest) in enumerate(tokens):
+            if kind == "lit":
+                parts.append(_escape_glob(text))
+            elif kind == "class":
+                parts.append("/" if i in crossing else text)
+            elif kind == "star":
+                parts.append("*/**/*" if i in crossing else "*")
+            else:
+                parts.append("/" if i in crossing else "?")
+        glob = "".join(parts)
+        while "**/**" in glob:
+            glob = glob.replace("**/**", "**")
+        out.append(glob)
+    return list(dict.fromkeys(out))
+
+
+def qmd_ignore_patterns(store: WikiStore) -> List[str]:
+    """qmd ``ignore:`` entries for everything hwiki never indexes."""
+    patterns: List[str] = []
+    for directory in store.untrusted_dirs:
+        patterns.append(f"{_escape_glob(directory)}/**")
+    for pattern in store.exclude:
+        patterns.extend(_globs_for_qmd(pattern))
+    return list(dict.fromkeys(patterns))
+
+
 class QmdBackend:
     """Optional hybrid retrieval via the ``qmd`` CLI.
 
@@ -282,6 +402,13 @@ class QmdBackend:
       ``search``  BM25 only, no models  (~0.3s)
       ``vsearch`` vector only           (~3s warm, needs embed models)
       ``query``   hybrid + rerank       (best quality, slowest, ~2-3s warm)
+
+    hwiki owns a dedicated qmd index (``--index <index>``, so
+    ``<qmd config dir>/<index>.yml`` and qmd's ``<index>.sqlite``) instead of
+    the user's default one. The collection is written to that index's YAML
+    config with ``ignore:`` built from ``untrusted_dirs`` and ``exclude``, so
+    qmd never reads, indexes or embeds those files. Results are still
+    re-checked against the store's rules before they are surfaced.
     """
 
     name = "qmd"
@@ -294,20 +421,30 @@ class QmdBackend:
         binary: str = "qmd",
         mode: str = "search",
         timeout: float = 6.0,
+        index: str = "hwiki",
     ) -> None:
         self.store = store
         self.collection = collection
+        self.index = index or "hwiki"
+        self.index_valid = bool(_INDEX_NAME_RE.match(self.index)) and \
+            self.index.lower() not in _RESERVED_INDEX_NAMES
+        if not self.index_valid:
+            logger.warning(
+                "wiki memory: qmd_index %r must be letters, digits, '-' or '_' and not "
+                "qmd's default 'index'; qmd disabled", self.index,
+            )
         self.binary = binary
         self.mode = mode if mode in {"search", "vsearch", "query"} else "search"
         self.timeout = float(timeout)
         self._registered = False
+        self._config_changed = False
         self._lock = threading.RLock()
 
     def resolve_binary(self) -> Optional[str]:
         return shutil.which(self.binary) or (self.binary if Path(self.binary).is_file() else None)
 
     def is_available(self) -> bool:
-        return self.resolve_binary() is not None
+        return self.index_valid and self.resolve_binary() is not None
 
     def _run(self, args: Sequence[str], timeout: Optional[float] = None) -> subprocess.CompletedProcess:
         binary = self.resolve_binary()
@@ -315,8 +452,12 @@ class QmdBackend:
             raise FileNotFoundError(f"{self.binary} not on PATH")
         env = dict(os.environ)
         env.setdefault("NO_COLOR", "1")
+        # INDEX_PATH would make qmd use another database whatever --index says.
+        env.pop("INDEX_PATH", None)
+        # An explicit --index also stops qmd from adopting a project-local
+        # .qmd/index.yml found above the current working directory.
         return subprocess.run(
-            [binary, *args],
+            [binary, "--index", self.index, *args],
             capture_output=True,
             text=True,
             timeout=timeout if timeout is not None else self.timeout,
@@ -324,34 +465,113 @@ class QmdBackend:
             check=False,
         )
 
+    def config_path(self) -> Path:
+        return qmd_config_dir() / f"{self.index}.yml"
+
+    def _cleanup_marker(self) -> Path:
+        """Present while a qmd cleanup is owed (survives restarts until one succeeds)."""
+        return qmd_config_dir() / f"{self.index}.hwiki-cleanup-pending"
+
+    def collection_config(self) -> Dict[str, object]:
+        return {
+            "path": str(self.store.root),
+            "pattern": ",".join(self.store.include),
+            "ignore": qmd_ignore_patterns(self.store),
+        }
+
+    def _write_index_config(self) -> bool:
+        """Write the collection into the index's YAML config; True when it changed.
+
+        Other top-level keys qmd keeps there (``models``) are preserved with
+        PyYAML, which always ships with Hermes. Without it, an existing file
+        that differs is never overwritten: qmd is skipped instead.
+        """
+        path = self.config_path()
+        wanted = {self.collection: self.collection_config()}
+        existing_text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        try:
+            import yaml  # type: ignore
+        except Exception:  # pragma: no cover - PyYAML ships with Hermes
+            yaml = None
+        if yaml is not None:
+            data = yaml.safe_load(existing_text) if existing_text else {}
+            if not isinstance(data, dict):
+                data = {}
+            if data.get("collections") == wanted:
+                return False
+            data["collections"] = wanted
+            text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+        else:
+            lines = ["collections:", f"  {json.dumps(self.collection)}:"]
+            lines.append(f"    path: {json.dumps(wanted[self.collection]['path'])}")
+            lines.append(f"    pattern: {json.dumps(wanted[self.collection]['pattern'])}")
+            lines.append("    ignore:")
+            lines += [f"      - {json.dumps(p)}" for p in wanted[self.collection]["ignore"]]
+            text = "\n".join(lines) + "\n"
+            if text == existing_text:
+                return False
+            if existing_text.strip():
+                raise RuntimeError(
+                    f"{path} has other content and PyYAML is unavailable to merge it; "
+                    "not overwriting it, qmd disabled"
+                )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".yml.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+
     def ensure_collection(self) -> bool:
-        """Register the wiki as a qmd collection once per process."""
+        """Write the dedicated index's collection config once per process."""
+        if not self.index_valid:
+            return False
         with self._lock:
             if self._registered:
                 return True
             try:
-                listing = self._run(["collection", "list"], timeout=20)
-                if self.collection not in (listing.stdout or ""):
-                    self._run(
-                        ["collection", "add", str(self.store.root), "--name", self.collection],
-                        timeout=180,
-                    )
+                if self._write_index_config():
+                    self._config_changed = True
                 self._registered = True
                 return True
             except Exception as exc:
-                logger.debug("qmd collection setup failed: %s", exc)
+                logger.warning("wiki memory: qmd collection setup failed: %s", exc)
                 return False
 
     def sync(self, *, force: bool = False) -> Dict[str, int]:
-        """Re-index (and optionally re-embed) the qmd collection."""
-        if not self.ensure_collection():
+        """Re-index (and optionally re-embed) the qmd collection.
+
+        When files left the collection (deleted, or newly excluded), ``qmd
+        cleanup`` also drops their inactive records, content and vectors.
+        """
+        if not self.is_available() or not self.ensure_collection():
             return {}
+        marker = self._cleanup_marker()
         try:
-            self._run(["update"], timeout=300)
+            # The marker is written BEFORE update: qmd commits removals as it goes,
+            # so an update that times out or crashes may already have deactivated
+            # files, and only a cleanup drops their content and vectors.
+            owed = marker.exists() or self._config_changed
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+            proc = self._run(["update"], timeout=300)
+            if proc.returncode != 0:
+                logger.debug("qmd update exited %s", proc.returncode)
+                return {}
+            match = re.search(r"(\d+)\s+removed", proc.stdout or "")
+            removed = int(match.group(1)) if match else 0
+            self._config_changed = False
+            if not (owed or removed):
+                marker.unlink()
+            if marker.exists():
+                cleanup = self._run(["cleanup"], timeout=300)
+                if cleanup.returncode == 0:
+                    marker.unlink()
+                else:
+                    logger.warning("wiki memory: qmd cleanup exited %s; will retry", cleanup.returncode)
             if self.mode in {"vsearch", "query"}:
                 self._run(["embed", "-c", self.collection], timeout=900)
         except Exception as exc:
-            logger.debug("qmd sync failed: %s", exc)
+            logger.debug("qmd sync failed: %s", type(exc).__name__)
         return {}
 
     def search(self, query: str, *, limit: int = 6, spine: str = "") -> List[SearchHit]:
@@ -360,7 +580,7 @@ class QmdBackend:
             return []
         # Over-fetch: untrusted hits are dropped below, and qmd has no
         # server-side exclusion, so ask for headroom to still fill `limit`.
-        args = [self.mode, query, "--json", "--limit", str(max(int(limit) * 3, int(limit) + 5)),
+        args = [self.mode, query, "--json", "-n", str(max(int(limit) * 3, int(limit) + 5)),
                 "--collection", self.collection]
         try:
             proc = self._run(args)
@@ -432,9 +652,12 @@ class QmdBackend:
         return hits
 
     def _to_relpath(self, raw: str) -> str:
-        """Normalise ``qmd://collection/rel/path.md`` and absolute paths."""
+        """Normalise ``qmd://collection/rel/path.md`` and absolute paths.
+
+        With ``--index`` qmd appends ``?index=<name>`` to the URI; it is dropped.
+        """
         if raw.startswith("qmd://"):
-            trimmed = raw[len("qmd://"):]
+            trimmed = raw[len("qmd://"):].split("?", 1)[0]
             _, _, rest = trimmed.partition("/")
             return rest or trimmed
         try:
@@ -666,6 +889,7 @@ def build_backend(
     qmd_collection: str = "hwiki",
     qmd_mode: str = "search",
     qmd_timeout: float = 6.0,
+    qmd_index: str = "hwiki",
     max_hits_per_page: int = 2,
     demote_paths: Optional[Sequence[str]] = None,
     fetch_multiplier: int = 4,
@@ -688,7 +912,7 @@ def build_backend(
     else:
         qmd = QmdBackend(
             store, collection=qmd_collection, binary=qmd_binary,
-            mode=qmd_mode, timeout=qmd_timeout,
+            mode=qmd_mode, timeout=qmd_timeout, index=qmd_index,
         )
         if not qmd.is_available():
             logger.warning(

@@ -24,9 +24,15 @@ where injected instructions live. Keep it in `raw/`:
 
 1. The store never yields untrusted paths, so they never enter the index.
 2. Page loading refuses them, so `wiki_memory_read` cannot open them.
-3. Every qmd result is re-checked against the same rules. qmd indexes whatever
-   directory it is given and has no per-query exclusion, so without this filter an
-   untrusted page would come back in hybrid results. A regression test covers it.
+3. With the qmd backend, hwiki uses a dedicated qmd index and writes its collection
+   with an `ignore:` list built from `untrusted_dirs` and `exclude`, so qmd never
+   reads, indexes or embeds those files; when a file leaves the collection (deleted
+   or newly excluded), `qmd cleanup` drops its records, content and vectors.
+   Regression tests check the index files themselves, including symlinks pointing
+   into an excluded folder.
+4. Every qmd result is still re-checked against the same rules before it is
+   surfaced, in case a glob means slightly less to qmd than to hwiki. A regression
+   test covers it.
 
 To read a raw source deliberately, use the normal file tools. That is an explicit,
 visible action rather than silent injection.

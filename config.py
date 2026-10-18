@@ -44,6 +44,7 @@ DEFAULTS: Dict[str, Any] = {
     "reindex_interval_s": 60,
     "qmd_binary": "qmd",
     "qmd_collection": "hwiki",
+    "qmd_index": "hwiki",          # dedicated qmd index (--index); never the default one
     "qmd_mode": "search",           # search | vsearch | query
     "qmd_timeout_s": 6.0,
     "max_hits_per_page": 2,         # ranking partition: per-page chunk cap
@@ -178,6 +179,7 @@ def build_runtime(config: Optional[Dict[str, Any]] = None):
         qmd_collection=str(config.get("qmd_collection") or "hwiki"),
         qmd_mode=str(config.get("qmd_mode") or "search"),
         qmd_timeout=float(config.get("qmd_timeout_s") or 6.0),
+        qmd_index=str(config.get("qmd_index") or "hwiki"),
         max_hits_per_page=int(config.get("max_hits_per_page") or 2),
         demote_paths=list(config.get("demote_paths") or []),
         fetch_multiplier=int(config.get("fetch_multiplier") or 4),
