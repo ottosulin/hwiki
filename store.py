@@ -111,13 +111,21 @@ def _as_str(value: object) -> str:
 # ---------------------------------------------------------------------------
 
 def slugify(value: str, *, fallback: str = "note") -> str:
-    """Filesystem-safe, lowercase, hyphenated slug."""
+    """Filesystem-safe, lowercase, hyphenated slug.
+
+    Non-ASCII letters are preserved
+    """
     value = unicodedata.normalize("NFKD", value or "")
-    value = value.encode("ascii", "ignore").decode("ascii")
+    # Drop combining marks explicitly: NFKD split accents off the base letter
+    # (café -> "e" + U+0301), and this puts "cafe" back. 
+    # * The re.sub below would strip the marks too (they are not \w), 
+    # but that is an implicit property of \w and is pinned here on purpose.
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = re.sub(r"[^\w\s-]", "", value).strip().lower()
     value = re.sub(r"[\s_]+", "-", value)
     value = re.sub(r"-{2,}", "-", value).strip("-")
     return value[:80] or fallback
+
 
 
 # ---------------------------------------------------------------------------

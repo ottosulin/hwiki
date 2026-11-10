@@ -73,7 +73,9 @@ class SearchHit:
 # FTS5
 # ---------------------------------------------------------------------------
 
-_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
+# ``\w`` is Unicode-aware in Python 3, so Cyrillic/Greek/CJK tokens survive.
+_FTS_TOKEN_RE = re.compile(r"\w[\w.\-]*")
+
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are",
     "was", "were", "be", "do", "does", "did", "what", "which", "who", "how",
